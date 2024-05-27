@@ -1,0 +1,297 @@
+---
+title: "Assignment 5: Panel Data and Fixed Effects"
+author: "238672"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    #code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{=html}
+<style>
+div.blue pre { background-color:lightblue; }
+div.blue pre.r { background-color:blue; }
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+```{r, include=FALSE}
+# Custom function to install needed packages, if they're not
+# already installed on your machine
+check.packages <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE,
+                     repos = "https://cran.rstudio.com")
+  sapply(pkg, require, character.only = TRUE)
+}
+```
+
+------------------------------------------------------------------------
+
+```{r, include = F}
+# LOAD PACKAGES HERE (PLEASE DON'T COPY IN CODE TO INSTALL PACKAGES)
+pacman::p_load(tidyverse, haven, estimatr, rdd, rdrobust, modelsummary, kableExtra, knitr, plm)
+```
+
+### General guidelines
+
+-   Please put all code used to arrive at your answer in the associated code box for that question. We cannot give full credit if you do not show the code you used to arrive at your answer, or if you put your code in the wrong place.
+-   The expected submission output is an HTML file. Only HTML submissions will be graded.
+-   Please include all your text-based answers inside the `::: answer :::` tags. Any answers written outside these designated sections will not be graded.
+-   Please avoid printing unnecessary output, such as complete data frames.
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 1: Effects of tax incentives on unemployment claims
+
+The dataset `unemployment_df.csv` contains data from 2010-2018 unemployment claims collected across the 20 cities in the State of New Tatooine.\footnote{These are simulated data.} During this time period, some city government authorities put in place a tax incentive plan for employers/industry to stimulate economic growth and reduce unemployment in their cities.
+
+You are part the policy evaluation team at the Secretary of Finance of the State of New Tatooine. Your task is to assess whether, and to what extent, the tax incentives affected the number of unemployment claims in the cities. Here is a short description of the data:
+  
+Our dataset, `unemployment_df`, contains the following information:
+
+- `city`: The name of the city
+- `region`: The name of the region within the State of New Tatooine
+- `year`: The year of the entry
+- `claims`: The number of unemployment claims per 100,000 inhabitants
+- `tax_incentive`: A binary variable that signals whether the city had a tax incentive in place at the specific time of the entry
+
+With these data, please perform the following tasks:
+
+**a.) Create a faceted graph showing the unemployment claim trajectories over time for each city, and use two different colors to distinguish when each city did and did not have a tax incentive in place.**
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(readr)
+
+# Read the dataset
+unemployment_df <- read_csv("unemployment_df.csv", show_col_types = FALSE)
+
+# Create the faceted graph
+unemployment_df %>%
+  dplyr::mutate(year_as_date = lubridate::ymd(year, truncated = 2L), # turning numeric to date format
+                city_factor = factor(unemployment_df$city)) %>% # ensuring city is treated as a factor
+  ggplot(., aes(x = year_as_date, y = claims, color = factor(tax_incentive))) +
+  geom_point() + #create scatterplot
+  geom_line(aes(group = 1)) + # to render consecutive lines
+  facet_wrap(~city_factor) + # to split plot into panels based on city
+  scale_x_date(date_labels = "%Y") + # formatting x-axis as years
+  labs(title = "Unemployment Claim Trajectories Over Time by City",
+       x = "Year",
+       y = "Unemployment Claims per 100,000 Inhabitants",
+       color = "Tax Incentive Status") +
+  theme_bw() + # using a black and white theme
+  scale_color_manual(name = " ", # changes to color dimension
+                     values = c("#a7a8aa", "#cc0055"),
+                     labels = c("No Tax Incentive", "Tax Incentive")) +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, hjust = 1, size = 8))
+
+```
+
+
+<br>
+
+**b.) Ignore the unit and time dimensions and run a naive model estimating the effect of tax incentives on unemployment claims. Interpret your results and discuss the necessary assumption(s) for this estimate to reflect a causal effect.^[Here, we are looking for a brief response, stated in your own words, and in terms of this particular case. Vague, unnecessarily long, rambling, Chat-GPT-generated answers that do not directly reference the specific content of this question or this course will receive no credit.]**
+
+```{r}
+# naive model
+naive_model <- plm::plm(claims ~ tax_incentive, 
+                        data = unemployment_df,
+                        model = "pooling") # performs regular OLS
+
+# summary of the naive model
+modelsummary::modelsummary(naive_model,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           fmt = 2)
+
+```
+
+
+::: answer
+The naive model suggests that cities with tax incentives had significantly fewer unemployment claims, indicating that, on average, cities with tax incentives in place had 509.31 fewer unemployment claims per 100,000 inhabitants compared to cities without tax incentives.
+
+The necessary assumption for this estimate to reflect a causal effect is that the tax incentive should be as if randomly assigned to cities, such that there are no systematic differences between cities with and without tax incentives. Meanwhile, the decision to implement tax incentives should not be influenced by the number of unemployment claims. 
+
+:::
+
+
+<br>
+
+**c.) Now, run a model with unit fixed effects. (You can use whichever approach you want, as long as it gets you the right answer.) Interpret your estimate. Compare the coefficient for the tax incentive to the one you got using the naive model.** 
+
+```{r}
+# unit fixed effects model
+unit_fe_model <- plm::plm(claims ~ tax_incentive, 
+                          data = unemployment_df,
+                          index = c("city"),
+                          effect = "individual",
+                          model = "within") # performs fixed effects
+
+# summary of the unit fixed effects model
+modelsummary::modelsummary(unit_fe_model,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           fmt = 2)
+
+
+```
+
+
+::: answer
+
+Our results indicate that the tax incentive has a substantial effect, leading to a reduction of 642.28, with 1% level statistic significance, in the dependent variable. In contrast, the unit fixed effects model, which accounts for city-specific differences that remain constant over time, reveals a more pronounced impact of the tax incentive compared to the naive model may have underestimated the effect of the city-specific differences.
+
+:::
+
+<br>
+
+**d.) Finally, run a model with both unit and time fixed effects. Interpret your estimate. Briefly explain why the unit and time fixed effects model may differ from the two others.^[See footnote 1.]**
+
+```{r}
+# unit and time fixed effects model
+unit_time_fe_model <- plm::plm(claims ~ tax_incentive, 
+                               data = unemployment_df,
+                               index = c("city", "year"),
+                               effect = "twoways",
+                               model = "within") # performs fixed effects
+
+# summary of the unit and time fixed effects model
+modelsummary::modelsummary(unit_time_fe_model,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           fmt = 2)
+
+
+```
+
+::: answer
+
+The unit and time fixed effects model shows a positive association but without statistical significance, indicating that the relationship is not clear-cut. The coefficient differs because it accounts for unobserved factors specific to each city and year, such as economic trends or policies that could affect all cities, suggesting the effect of tax incentives on unemployment claims is not as straightforward as the naive model and unit fixed effects model imply.
+
+:::
+
+<br>
+
+
+**e.) What is the difference in predicted unemployment claims between the cities of Minetown and Dark Meadow, holding the year and treatment status constant?**
+
+```{r}
+# Subset the data for Minetown and Dark Meadow
+diff_unemployment_df <- unemployment_df %>%
+  filter(city %in% c("Minetown", "Dark Meadow"))
+
+# unit and time fixed effects model
+unit_time_fe_model_2 <- lm(claims ~ tax_incentive + factor(year) + factor(city), #choose lm() since both cities have no tax incentive.
+                           data = diff_unemployment_df)
+
+# difference in predicted unemployment claims between Minetown and Dark Meadow
+diff_predictions <- diff_unemployment_df %>%
+  mutate(predicted_claims = predict(unit_time_fe_model_2)) %>%
+  group_by(city) %>%
+  summarize(mean_predicted_claims = round(mean(predicted_claims), 2))
+
+# add a row for the difference
+diff_predictions %>%
+  add_row(city = "Difference", 
+          # calculate the difference with absolute value
+          mean_predicted_claims = abs(diff(diff_predictions$mean_predicted_claims))) %>% 
+  kable(format = "html") %>%
+  kable_styling(full_width = F)
+ 
+
+```
+
+::: answer
+
+Minetown has 3,248.98 more predicted unemployment claims per 100,000 inhabitants than Dark Meadow, holding the year and treatment status constant, suggesting that the difference is not due to year or tax incentive status but potentially other unobserved factors.
+
+::: 
+
+### Task 2: Vehicle fatalities and drinking policies 
+
+We will use the dataset `fatality.dta`, which contains data for the vehicle fatality rate in each of the 48 contiguous United States across 7 years as well as information on various policies in each state that are thought to be associated with drinking and driving and related demographic variables aggregated to the state level. (Variable description available here: http://fmwww.bc.edu/ec-p/data/stockwatson/fatality.des.) For interpretation, assume the vehicle fatality rate is measured as deaths per 10,000 registered drivers and the beer tax is measured as dollars per case of beer.
+
+**a.) Regress the vehicle fatality rate on the policy variable, `beertax`, and control for potential confounders: per capita income, unemployment rate, the percentage of drivers between the ages of 15 and 24, and the average miles driven. Please also include state and year fixed effects. Report the treatment effect of the policy in a well-formatted table and briefly interpret your estimate.** 
+
+```{r}
+# getting things started for you 
+# load data 
+dat <- read_dta("fatality.dta")
+
+# make correct mrall variable
+summary(dat$mrall)
+dat$mrall10k <- dat$mrall * 10000
+summary(dat$mrall10k)
+
+# continue here
+# make income in thousands
+dat$perinc_k <- dat$perinc / 1000
+
+# make average miles driven in thousands
+dat$vmiles_k <- dat$vmiles / 1000
+
+# Regress the vehicle fatality rate on the policy variable 'beertax' and control for confounders
+# Include state and year fixed effects
+fatality_model <- plm(mrall10k ~ beertax + perinc_k + unrate + yngdrv + vmiles_k + factor(state) + factor(year),
+                      data = dat,
+                      index = c("state", "year"),
+                      model = "within")
+
+# Summary of the model
+modelsummary(fatality_model,
+             stars = c('*' = .1, '**' = .05, '***' = .01),
+             statistic = 'conf.int',
+             gof_omit = "AIC|BIC|Log.Lik.",
+             fmt = 2)
+
+
+```
+
+::: answer
+
+On one hand, the coefficient for `beertax` is **-0.52**, indicating that an increase in beer tax is associated with a 0.52 per 10,000 decrease in the vehicle fatality rate with marginally significant. On the other hand, the coefficients for per capita income and unemployment rate are significant, which suggests that these variables are strongly associated with the fatality rate, while the average miles driven and the percentage of drivers between the ages of 15 and 24 are not significant. 
+
+Furthermore, the coefficients for the time variable (`year`) indicate significant changes in the fatality rate over time, with a general trend of decrease from 1983 to 1988.
+
+Finally, the state fixed effects account for unobserved heterogeneity across states, while the year fixed effects capture time-varying factors that affect all states equally, which is crucial for identifying the causal effect of the beer tax on the fatality rate.
+
+::: 
+
+<br>
+
+**b.) Propose a potential confounder that might bias your results in the previous question.^[Take special care to review precisely what kind of confounding is a threat to inference with a two-way (i.e., time and unit) fixed effects model, and be precise in your answer.] (It doesn't have to be something included in the dataset.)**
+
+::: answer
+
+A factor that could potentially skew the results when examining the effects of beer tax on vehicle fatality rates is the possibility of changes in law enforcement procedures. If there have been alterations in traffic law enforcement practices over time like DUI checkpoints or more relaxed approaches this could impact fatality rates regardless of the beer tax. This kind of influencing factor poses a challenge to drawing conclusions with a two-way fixed effects model because it can introduce variability that is related to both the treatment (beer tax) and the outcome (fatality rates) without being adjusted for by including fixed effects for time and unit. To tackle this issue, it would be necessary to consider law enforcement practices if data were accessible or employ an instrumental variable method if such changes are thought to be inherent to the system, under study.
+
+::: 
+
+<br>

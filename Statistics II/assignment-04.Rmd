@@ -1,0 +1,523 @@
+---
+title: "Assignment 4: Regression Discontinuity and Difference-in-Differences"
+author: "238672"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    #code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{=html}
+<style>
+div.blue pre { background-color:lightblue; }
+div.blue pre.r { background-color:blue; }
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+```{r, include=FALSE}
+# Custom function to install needed packages, if they're not
+# already installed on your machine
+check.packages <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE,
+                     repos = "https://cran.rstudio.com")
+  sapply(pkg, require, character.only = TRUE)
+}
+```
+
+------------------------------------------------------------------------
+
+```{r, include = F}
+# LOAD PACKAGES HERE (PLEASE DON'T COPY IN CODE TO INSTALL PACKAGES)
+pacman::p_load(tidyverse, estimatr, rdd, rdrobust, modelsummary, kableExtra, knitr, descr, ggplot2)
+```
+
+### General guidelines
+
+-   Please put all code used to arrive at your answer in the associated code box for that question. We cannot give full credit if you do not show the code you used to arrive at your answer, or if you put your code in the wrong place.
+-   The expected submission output is an HTML file. Only HTML submissions will be graded.
+-   Please include all your text-based answers inside the `::: answer :::` tags. Any answers written outside these designated sections will not be graded.
+-   Please avoid printing unnecessary output, such as complete data frames.
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 1: Effects of a pre- and post-natal health care policy [12 points in total]
+
+The dataset `hospitals.tsv` provides data collected on women who gave birth at any one of several hospitals in disadvantaged neighborhoods in New York. These data are used to evaluate the effect of a government policy that makes available pre- and post-natal health care for pregnant women, new mothers, and their children, who meet certain income eligibility requirements. To receive services, the income of these women has to have been below $20,000 at the time they gave birth. The general question of interest is whether this program increases a measure of child health at age 3. Here is a short description of the data:
+  
+- `incomeR:` Reported household income in thousands
+- `health:` A numeric health score of the child, with higher values indicating better health
+- `program:` A binary indicator for being in the program
+
+With these data, perform the following tasks:
+
+**a) Provide a visualization of the treatment assignment on the y-axis and the running variable on the x-axis. Does this tell you that you may have a valid RDD design? If so, is it sharp or fuzzy? **
+
+```{r}
+#load the data
+hospitals <- read_tsv("hospitals.tsv")
+
+#plot the data
+ggplot(hospitals, aes(x = incomeR, y = program, color = factor(program))) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Assignment of treatment and running variable",
+       x = "Reported income",
+       y = "Program participation") +
+  scale_color_manual(name = " ", 
+                     values = c("#a7a8aa", "#ff990d"),
+                     labels = c("Control", "Treatment"))+
+  theme(legend.position = "bottom")
+
+```
+
+::: answer
+
+The plot shows that the assignment of treatment is not random, as the program is only available to those with income below $20,000. The plot suggests that the program is sharp, as there is a clear discontinuity in the assignment of treatment at the threshold of $20,000.
+
+:::
+
+
+<br>
+
+
+**b) Create a scatter plot of reported income (x-axis) versus health status (y-axis). Plot <b style="color:#ff990d;">treated</b> observations in <b style="color:#ff990d;">#ff990d (orange)</b> and <b style="color:#a7a8aa;">controls</b> in <span style="color:#a7a8aa;"> #a7a8aa (light gray)</span>. Keep this convention for future plots in this task.**
+
+```{r}
+#create a scatter plot of reported income versus health status
+#Convention: treated observations in #ff990d (orange) and controls in #a7a8aa (light gray).
+
+ggplot(hospitals, aes(x = incomeR, y = health, color = program)) +
+  geom_point(aes(color = ifelse(program == "1", "#ff990d", "#a7a8aa"))) +
+  scale_color_identity() +
+  geom_vline(xintercept = 20, linetype = "dotted") +
+  theme_minimal() +
+  labs(title = "Reported income versus health status",
+       x = "Reported income",
+       y = "Health status") +
+  scale_color_manual(name = " ", 
+                     values = c("#a7a8aa", "#ff990d"),
+                     labels = c("Control", "Treatment"))+
+  theme(legend.position = "bottom")
+
+
+```
+
+::: answer
+
+:::
+
+<br>
+
+**c) Calculate a naïve estimate of the effect of the program by running a regression of health on the indicator for program participation. As always, please report your results in a well-formatted table. Interpret the estimate, and explain why it's "naïve." **
+
+```{r}
+#calculate a naive estimate of the effect of the program
+naive_model <- lm(health ~ program, data = hospitals)
+
+#display the results in a well-formatted table
+modelsummary(naive_model,
+             stars = c('*' = .1, '**' = .05, '***' = .01),
+             gof_omit = "AIC|BIC|Log.Lik.",
+             statistic = 'conf.int',
+             fmt = 2)
+
+```
+
+::: answer
+
+- **Estimate Interpretation**:
+The coefficient for `program1` is **-3.54** with statistically significant, which suggests that, on average, participation in the program is associated with a **decrease** in the health score by approximately **3.54 points** compared to those not in the program. 
+
+- **Naïveté Explanation**:
+The estimate is "naïve" because it likely suffers from **omitted variable bias**. It does not account for other variables that could influence the health score, such as income, lifestyle, or environmental factors. Therefore, the estimate may not accurately reflect the true effect of the program on child health.
+
+- **Model Limitations**:
+The model assumes a linear relationship and does not consider the possibility of a more complex relationship between program participation and health outcomes. Additionally, it does not control for potential confounders or use a more robust design like RDD to isolate the causal effect.
+
+:::
+
+<br>
+
+**d) Cut down the dataset to a sample containing only the units within ±$2800 from the threshold, and then estimate the LATE at the threshold using a linear model with common slopes with `lm()`. Provide a plot in which you show the fitted curves over the underlying scatter plot of the data. Interpret your LATE estimate.**
+
+```{r}
+# creat a variable for the income threshold
+hospitals$forcing <- hospitals$incomeR - 20
+
+#cut down the dataset to a sample within ±$2800 from the threshold
+hospitals_sub <-
+  hospitals %>% filter(incomeR >= 17.2 & incomeR <= 22.8)
+
+#estimate the LATE at the threshold using a linear model with common slopes
+linear_model <- lm(health ~ program + forcing, data = hospitals_sub)
+
+modelsummary::modelsummary(linear_model,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           statistic = 'conf.int',
+                           fmt = 2)
+
+hospitals_sub$yhat_linear <- predict(linear_model) # we create a new variable containing the predicted values
+
+# Plot the fitted curves over the underlying scatter plot of the data
+linear_plot <- hospitals_sub %>%
+  ggplot(aes(x = forcing,
+             y = yhat_linear, # notice here the predicted y values
+             col = factor(program))) +
+  geom_point(aes(x = forcing, 
+                 y = health, # notice here the actual health scores
+                 col = factor(program))) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(title = "LATE Estimate at the Income Threshold with Common Slope",
+       x = "Forcing variable (Reported Income in thousands)",
+       y = "Child Health Score") +
+  geom_line(data = hospitals_sub[hospitals_sub$forcing < 0,], 
+            color = "#ff990d", # color lines
+            linewidth = 1) +
+  geom_line(data = hospitals_sub[hospitals_sub$forcing >= 0,], 
+            color = "#a7a8aa", # color lines
+            linewidth = 1) +
+  scale_color_manual(name = " ",
+                     values = c("#a7a8aa", "#ff990d"),
+                     labels = c("Control", "Treatment")) + #change colors manually of color argument in aes()
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+linear_plot
+
+```
+
+::: answer
+
+Based on the model summary, the LATE estimate at the threshold is **1.29** with a statistically significant p-value. We can expect 1.29 more health scores for children in the treatment group compared to the control group around the income threshold of $20,000. We also see that for each one thousands reported income increase, the expected health scores increases by **0.28**. It means that the health score is positively associated with the reported income.
+
+The plot shows the fitted curves over the underlying scatter plot of the data, with the treatment group (orange) having higher child health scores than the control group (grey) around the income threshold. This provides visual evidence supporting the LATE estimate. The clear discontinuity at $20,000 supports the validity of a **sharp RDD**, as the treatment is assigned based on whether income is below this threshold.
+
+Overall, the LATE estimate implies that the government policy is beneficial for child health at age 3 among those who are just eligible (income slightly below $20,000) compared to those who are just ineligible.
+
+:::
+
+<br>
+
+**e) Conduct the same analysis as in part (d), but now please use a quadratic model with different model coefficients for the treated and control groups. Interpret your estimate.**
+
+```{r}
+#using a quadratic model with different coefficients
+quadratic_model <- lm(health ~ forcing + 
+                  I(forcing^2) + # I tells R to interpret "as is"
+                  program + 
+                  I(forcing * program) + 
+                  I((forcing^2) * program),
+                data = hospitals_sub)
+
+modelsummary::modelsummary(quadratic_model,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           statistic = 'conf.int',
+                           fmt = 2)
+
+hospitals_sub$yhat_quadratic <- predict(quadratic_model) # create a new variable containing the predicted values
+
+quadratic_plot <- hospitals_sub %>% 
+  ggplot(aes(x = forcing,
+             y = yhat_quadratic, # notice here the predicted y values
+             col = factor(program))) +
+  geom_point(aes(x = forcing, 
+                 y = health, # notice here the actual health scores
+                 col = factor(program))) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(title = "Quadratic Plot with Different Coefficients",
+       x = "Forcing variable (Reported Income in thousands)",
+       y = "Child Health Score") +
+  #geom_smooth(method = "lm", se = F,formula = y ~ poly(x, 2)) +
+  geom_line(data = hospitals_sub[hospitals_sub$forcing < 0,], 
+            color = "#ff990d", # color lines
+            linewidth = 1) +
+  geom_line(data = hospitals_sub[hospitals_sub$forcing >= 0,], 
+            color = "#a7a8aa", # color lines
+            linewidth = 1) +
+  scale_color_manual(name = " ",
+                     values = c("#a7a8aa", "#ff990d"),
+                     labels = c("Control", "Treatment")) + #change colors manually of color argument in aes()
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+quadratic_plot
+
+
+```
+
+::: answer
+
+The quadratic model analysis indicates a positive association between program participation and child health scores, with a coefficient of **0.92**. This suggests that children in the program tend to have higher health scores. However, the significance level of 10% implies limited evidence of the program's impact. The interaction term **I(forcing * program)** is significant, showing that income's effect on health scores varies between the treatment and control groups. The lack of significance in the quadratic interaction term **I((forcing^2) * program)** indicates that the quadratic relationship between income and health scores is not pronounced across these groups.
+
+The plot demonstrates a clear discontinuity at the income threshold, validating the regression discontinuity design for causal inference. The treatment group, represented by the orange line, shows an increase in child health scores with rising reported income, corroborated by the significant positive coefficient for **I(forcing * program)**. The control group, shown in grey, exhibits a decrease at the threshold and an increase above $21500, but the coefficients for **forcing** and **I(forcing^2)** are not statistically significant, suggesting a weaker quadratic relationship, particularly for the control group.
+
+In summary, the model and plot suggest that the program positively influences child health scores near the income eligibility threshold, with varying effects based on income. The quadratic model provides a more detailed understanding of this relationship than a linear model, but the evidence remains somewhat inconclusive due to the significance level.
+
+:::
+
+<br>
+
+**f) Now estimate, with the full dataset, the LATE at the threshold using a local linear regression with `rdrobust::rdrobust()`. Interpret your estimate.**
+
+```{r}
+# estimate the LATE at the threshold using a local linear regression
+rd_model <- rdrobust::rdrobust(y = hospitals$health, 
+                               x = hospitals$forcing, 
+                               c = 0,  # threshold for the running variable
+                               all = TRUE)
+
+# Display the results
+summary(rd_model, all = TRUE)
+
+```
+
+::: answer
+The Bias-Corrected estimate of the treatment effect (LATE) is -1.244 with a standard error of 0.265, which is statistically significant at the 0% level (p-value < 0.001), indicating a strong negative effect of the treatment on the health score. The negative coefficients suggest that the program is associated with a decrease in child health scores at the income threshold. The results are consistent with the previous analyses, indicating that the program has a detrimental effect on child health outcomes.
+
+:::
+
+<br>
+
+**g) A colleague now points out to you that some women may have incentives in these settings to misreport their actual income. Provide visual evidence that helps support or refute the claim. What assumption is called into question if women are truly misreporting in this manner?**
+
+```{r}
+
+# Create a density plot of reported income around the threshold
+ggplot(hospitals, aes(x = incomeR)) +
+  geom_density(fill = "#ff990d", alpha = 0.5) +
+  geom_vline(xintercept = 20, linetype = "dashed") + # The dashed line represents the threshold
+  labs(title = "Density Plot of Reported Income",
+       x = "Reported Income (in thousands)",
+       y = "Density") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+```
+
+::: answer
+
+**Visual Evidence**: Based on the density plot provided, there is visual evidence to support the claim that some women may have incentives to misreport their actual income. The plot shows two prominent peaks, with the first peak around $0 and the **second peak** occurring just before the $20,000 threshold. The sudden drop after the first peak suggests that women might be reporting their income to be less than it actually is to fall into the lower income bracket and become eligible for the program.
+
+**Assumption in Question**: The accuracy and honesty of self-reported income data are called into question. If women are indeed misreporting their income, it could lead to biased estimates of the program's effect on child health outcomes. The assumption called into question here is the **accuracy of the running variable**, which is essential for a valid regression discontinuity analysis. Misreporting could introduce systematic errors in the assignment variable, affecting the credibility of the causal inference.
+
+:::
+
+<br>
+
+**h) Another colleague points out to you that several other government programs (including food stamps, etc.) have the same income threshold for eligibility. How might this knowledge affect your interpretation of your results?**
+
+::: answer
+The fact of multiple government programs with the similar income threshold for eligibility could potentially affect the results in several ways:
+
+- **Confounding Variables**: The effects observed may not be solely attributable to the pre- and post-natal health care policy. Other programs could be influencing the health outcomes, making it difficult to isolate the impact of the health care policy alone.
+
+- **Complementary Effects**: If the programs are complementary, the combined effect might be greater than the sum of the individual effects, leading to an overestimation of the health care policy's impact.
+
+- **Threshold Manipulation**: Individuals might manipulate their reported income to become eligible for multiple benefits, which could introduce bias in the estimated effect of the health care policy.
+
+Understanding these potential influences is crucial for a comprehensive evaluation of the policy's effectiveness. It may be necessary to control for the effects of other programs or to design a study that can separately identify the impact of each program.
+
+:::
+
+### Task 2: Effects of a provisional bike infrastructure on cycling uptake 
+
+The dataset `biking_df.csv` contains data collected from bicycle counters across 200 cities in the country of Gazorpazorp.\footnote{These are simulated data.} The national government randomly allocated funds for municipalities to arrange pop-up bicycle lanes. You are heading the policy evaluation team at the Ministry of Transport. Your task is to assess whether, and to what extent, the provisional bicycling infrastructure affected cycling uptake in the municipalities. Here is a short description of the data:
+  
+Our dataset `biking_df` contains the following information:
+
+- `ìd`: A unique numeric identifier for each of the municipalities
+- `treatment`: A binary indicator for whether the municipality built the pop-up lanes
+- `pre_lanes`: The average daily bike counts in the municipality before the pop-up lanes were built
+- `post_lanes`: The average daily bike counts in the municipality after the pop-up lanes were built
+
+With these data, perform the following tasks:
+
+**a) Create a faceted density plot illustrating the distributions of the daily bike counts across time (pre-and post-lanes) and treatment groups (control and treated). The panels should be labelled properly and the group-specific means should be highlighted in the plot using vertical lines.**
+
+```{r}
+# Load the data
+biking_df <- read_csv("biking_df.csv")
+
+# Create a long format data frame with pre and post lane counts
+biking_df_long <- biking_df %>%
+  pivot_longer(cols = c(pre_lane, post_lane), # both contain information about bike counts at two points in time.
+               names_to = "period",    # grab the names of pre and post and save them to period
+               values_to = "bike_counts") %>% # grab values from pre and post and put them in bike_counts
+  mutate(after_lane = ifelse(period == "post_lane", 1, 0)) # create dummy for period
+
+# Create a faceted density plot
+biking_df_long %>% 
+  dplyr::mutate(period = ifelse(period == "post_lane", "T1 - Post-lane", "T0 - Pre-lane"), # create more meaningful labels
+                treatment = ifelse(treatment == 1, "Treated (D=1)", "Untreated (D=0)")) %>%
+  dplyr::group_by(period, treatment) %>% # group to extract means of each group at each time
+  dplyr::mutate(group_mean = mean(bike_counts)) %>% # extract means of each group at each time
+ggplot(aes(x = bike_counts, fill = factor(treatment))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(name = " ", values = c("#ff990d", "#a7a8aa"),
+                    labels = c("Treated", "Control")) +
+  facet_grid(rows = vars(treatment), cols = vars(period)) +
+  geom_vline(aes(xintercept = group_mean), linetype = "longdash") +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(x = "Daily Bike Counts",
+       y = "Density")
+
+```
+
+<br>
+
+**b) Ignore the time dimension and provide an estimate of the treatment on the outcome in the post-treatment period. Interpret your estimate and discuss the assumption(s) that would have to hold for this to be a causal effect. **
+
+```{r}
+# Estimate the treatment effect on the outcome in the post-treatment period
+after_model <- lm(post_lane ~ treatment, data = biking_df)
+
+# Display the results
+modelsummary(after_model,
+             stars = c('*' = .1, '**' = .05, '***' = .01),
+             gof_omit = "AIC|BIC|Log.Lik.",
+             statistic = 'conf.int',
+             fmt = 2)
+
+```
+
+::: answer
+
+**Treatment Estimate Interpretation:**
+
+The coefficient for **treatment** is **181.68**, indicating that municipalities with the pop-up bike lanes saw an average increase of **181.68** in daily bike counts with statistically significant compared to those without the lanes.
+
+**Causal Effect Assumptions:** 
+
+Several assumptions need to hold for this estimate to represent a causal effect:
+
+- **Random Assignment**: The treatment effect assumes that the allocation of pop-up lanes was random, ensuring comparable groups.
+
+- **Stable Unit Treatment Value Assumption (SUTVA)**: The effect of the treatment on any unit should not vary based on the treatment status of other units, which could be violated if the lanes influenced neighboring districts.
+
+- **Potential Confounders**: We must assume that the there are no baseline differences between the different districts due to factors other than the treatment, such as weather or new cycling policies. These confounders could influence the post-treatment comparisons, thus affecting the validity of the outcome of the treatment.
+
+:::
+
+
+<br>
+
+**c) Report the average daily bike counts for the treated group and the control group in the pre-treatment and the post-treatment period. Please report the differences from pre- to post-treatment for the treated and control groups in this table as well. With the values gathered from this table, manually compute the diff-in-diff estimate and report it in the text field. (You can use R as a calculator).**
+
+```{r}
+# Calculate the average daily bike counts for the treated and control groups in the pre-treatment and post-treatment period
+biking_df_long %>%
+  dplyr::group_by(period, treatment) %>% #group by period and treatment
+  dplyr::summarize(bike_mean = mean(bike_counts), .groups = 'drop') %>% #render averages and drop the additional grouping
+  tidyr::pivot_wider(names_from = period, values_from = bike_mean) %>% #turn from long to wide
+  dplyr::select(treatment, pre_lane, post_lane) %>% # re-arrange variables
+  dplyr::arrange(desc(treatment)) %>%
+  dplyr::mutate(difference = post_lane - pre_lane) %>%
+  knitr::kable(col.names = c("Treatment", "Pre-lane", "Post-lane", "Difference"),
+               digits = 2) %>%
+  kableExtra::kable_styling(full_width = F) %>%
+  kableExtra::add_header_above(c("", "Period" = 2, "")) #add header for period
+
+
+# Manually compute the diff-in-diff estimate
+diff_in_diff_estimate <- (628.90 - 336.09) - (447.23 - 269.26)
+diff_in_diff_estimate
+
+```
+
+::: answer
+For the treated group, the difference between post and pre is ( 628.90 - 336.09 = 292.81 ).
+For the control group, the difference between post and pre is ( 447.23 - 269.26 = 177.97 ).
+The diff-in-diff estimate is the difference between these two differences: ( 292.81−177.97=114.84 ).
+
+The diff-in-diff estimate represents the estimated effect of the treatment on the outcome variable, controlling for differences over time and between the treatment and control groups. It suggests that the pop-up bike lanes increased the average daily bike counts by approximately 114.84 counts.
+
+:::
+
+<br>
+
+**d) Calculate the effect of the pop-up bike lanes using the regression formulation of diff-in-diff. Interpret your estimate and discuss the assumption(s) needed for this to be a causal effect.**
+
+```{r}
+# Estimate the effect of the pop-up bike lanes using the regression formulation of diff-in-diff
+diff_in_diff_model <- lm(bike_counts ~ treatment + after_lane + treatment * after_lane, data = biking_df_long)
+
+# Display the results
+modelsummary(diff_in_diff_model,
+             stars = c('*' = .1, '**' = .05, '***' = .01),
+             gof_omit = "AIC|BIC|Log.Lik.",
+             statistic = 'conf.int',
+             fmt = 2)
+
+```
+
+::: answer
+Here's the interpretation for the estimate of the diff-in-diff model:
+
+- **Base Level Cycling Uptake**: The intercept (269.26) represents the average daily bike counts for the control group before the pop-up lanes were built.
+
+- **Treatment Effect Pre-Lanes**: The treatment coefficient (66.83) suggests that, before the lanes were built, the treated municipalities had an average of 66.83 more daily bike counts than the control group.
+
+- **Time Effect**: The after_lane coefficient (177.96) indicates that, after the lanes were built, there was an increase of 177.96 in the average daily bike counts across all municipalities.
+
+- **DiD Estimate**: The interaction term (treatment:after_lane) of 114.85 is the DiD estimate. It represents the additional increase in daily bike counts in the treated municipalities due to the pop-up lanes, over and above the time effect and the pre-existing difference between the groups.
+
+This DiD estimate is statistically significant, implying a causal effect of the pop-up lanes on cycling uptake in the treated municipalities. 
+The assumptions required for this to be a causal effect include: 
+
+- **Parallel Trends**: Before the intervention, the treated and control groups must have similar trends in the outcome variable. This means that, in the absence of the treatment, the groups would have continued along parallel paths.
+  
+- **No Spillover Effects**: The treatment should not affect the control group. There should be no interaction between treated and control municipalities that could influence the outcome.
+  
+- **No Other Changes**: There should be no other events or interventions occurring at the same time as the treatment that could affect the outcome.
+  
+- **Random Assignment**: The treatment assignment should be random or as good as random, meaning that any other potential confounders are equally distributed between the treated and control groups.
+
+:::
+
+<br>
+
+
+
+
+**e) A colleague of yours points out that the allocation process was not fully random as the government had led you to believe. It appears that previous bike uptake trends were taken into account in the decision-making process. Mayors of municipalities where bike uptake had been steadily growing lobbied for priority access to the resources. How would this change your evaluation of the program?**
+
+::: answer
+The consideration of previous bike uptake trends in the non-random allocation process could significantly impact the evaluation of the program in several ways:
+
+- **Bias in Estimates**: The revelation that the allocation process considered previous bike uptake trends introduces bias. The treatment effect estimated earlier may be overstated if municipalities with growing bike uptake were more likely to receive pop-up lanes.
+
+- **Parallel Trends Assumption Violation**: The assumption of parallel trends between treated and control groups is likely violated. This assumption is crucial for the validity of the difference-in-differences (DiD) approach.
+
+- **Reevaluation of Results**: The evaluation of the program's effectiveness needs reexamination. It's essential to account for the non-random allocation to isolate the true impact of the pop-up lanes on cycling uptake.
+
+- **Potential Remedies**: Advanced econometric techniques, such as instrumental variables or propensity score matching, might be necessary to address the allocation bias and obtain a more accurate estimate of the program's effect.
+
+:::

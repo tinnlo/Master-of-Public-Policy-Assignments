@@ -1,0 +1,268 @@
+---
+title: "Assignment 1: The Potential Outcomes Framework and DAGs"
+author: "238672"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    #code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+<style>
+div.gradingadvice {background-color:#a2bc89; border-radius: 5px; padding: 20px;}
+</style>
+
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+
+------------------------------------------------------------------------
+
+```{r, include=F}
+# LOAD PACKAGES HERE (PLEASE DON'T COPY IN CODE TO INSTALL PACKAGES)
+pacman::p_load(tidyverse, ggdag, dagitty, magrittr)
+```
+
+### General Guidelines
+
+- Please put all code used to arrive at your answer in the associated code box for that question. We cannot give full credit if you do not show the code you used to arrive at your answer, or if you put your code in the wrong place. 
+- The expected submission output is an HTML file. Only HTML submissions will be graded.
+- Please include all your text-based answers inside the `::: answer :::` tags. Any answers written outside these designated areas will not be graded.
+- Please avoid printing unnecessary output, such as complete data frames.
+
+<br>
+
+### Task 1: Potential Outcomes
+
+A research group is interested in the effects that being part of a worker's union has on wages. The researchers have gathered the hourly wages of over 4,000 workers from the years 2010 to 2017. They conclude, based on these data, that union membership has practically no effect on wages.
+
+You're skeptical of these findings. Fortunately, you somehow have access to knowledge that no real researcher can ever hope to attain: you can observe *both* potential outcomes for these workers, in the state of the world in which they joined a union, and in the counterfactual state of the world in which they did not. (Although this is impossible in reality, we will use some simulated data for the sake of this exercise.) 
+
+The data are stored in the `wages_union.rds` file and contain the following information:
+
+-   `subject_id`: identification number for each worker
+-   `union_memb`: binary marker for each worker's treatment status (union membership)
+-   `salary_0`: potential hourly wage under no union membership 
+-   `salary_1`: potential hourly wage under union membership 
+
+<br>
+
+a) **Load the data. Create a variable called `hourly_salary` inside your data frame that represents the observed outcome that the research team would actually get to see in real-world data.**^[The `ifelse` function might be helpful here.]
+
+```{r}
+
+library(readr)
+library(dplyr)
+
+# Load the data
+wages_union <- read_rds("wages_union.rds")
+wages_union <- wages_union %>% 
+mutate(hourly_salary = ifelse(union_memb == 1, salary_1, salary_0))
+
+head(wages_union, 10)
+
+```
+
+<br>
+
+b) **Extract the following quantities of interest, rounding to two decimal places. If the output is more than a single number, please provide the first ten elements (not the entire data frame!).**^[The `dplyr` functions you learned might be helpful here.]
+
+<br>
+
+-   **Individual treatment effects (ITEs)**
+
+```{r}
+
+# ITEs
+head(wages_union %>% 
+  mutate(ITE = salary_1 - salary_0),10)
+
+```
+
+<br>
+
+-   **Average treatment effect (ATE)**
+
+```{r}
+# ATE
+wages_union %>% 
+  mutate(ITE = salary_1 - salary_0) %>% 
+  summarize(ATE = mean(ITE))
+
+```
+
+<br>
+
+-   **Naive difference in means**
+
+```{r}
+# NATE
+wages_union %>% 
+  group_by(union_memb) %>%
+  summarize(mean_hourly_salary = mean(hourly_salary)) %>% 
+  summarize(NATE = round(mean_hourly_salary[union_memb == 1] - 
+                         mean_hourly_salary[union_memb == 0], 2))
+
+```
+
+<br>
+
+-   **Selection bias**
+
+```{r}
+# Selection bias
+wages_union %>% 
+  group_by(union_memb) %>%
+  summarize(avg_control_salary = mean(salary_0)) %>%
+  summarize(selection_bias = round(avg_control_salary[union_memb == 1] - 
+                                   avg_control_salary[union_memb == 0], 2))
+
+```
+
+<br>
+
+c) **Step back and examine your findings. First, please confirm for yourself that the decomposition you learned on Slide 22 of Lecture 2 indeed holds up in this exercise. Then, briefly comment: were the authors of the study correct to conclude that union membership has practically no causal effect on wages? If not, where did they go wrong in their study?**
+
+::: answer
+
+The author of the study was not correct to conclude that union membership has practically no causal effect on wages. The Naive difference in means is close to zero (0.07), which means that the average causal effect of union membership on wages for those who are not union members is very small. However, this does not mean that union membership has no effect on wages for everyone. As we saw, the ATE is 2, which means that the average causal effect of union membership on wages for the whole population is positive and significant. Moreover, the study went wrong by not accounting for the confounding factors that affect both union membership and wages, such as education, experience, and occupation. These factors create a non-random assignment of workers to union or non-union groups, which leads to a selection bias in the naive estimate of the causal effect. Therefore, it is important to look beyond the NATE and consider the other measures of causal effects when evaluating the impact of union membership on wages.
+
+:::
+
+<br>
+
+### Task 2: Working With DAGs
+
+After months of research, you think you finally understand how to model the effect of groundbreaking policy $X$ on outcome $Y$, including all potential confounders. 
+
+```{r echo=F, fig.align="center", out.width="50%"}
+knitr::include_graphics("05-DAG.png")
+```
+
+<br>
+
+a) **Recreate this image using `ggdag`.**^[You don't have to put the variables in the same exact positions; just recreate the causal structure.]
+
+```{r, fig.align='center'}
+
+# Create a DAG object using dagitty syntax
+dag <- dagify(Y ~ X + Z1 + Z2 + Z3,
+              X ~ Z1 + Z4,
+              Z1 ~ Z2 + Z4,
+              Z3 ~ X)
+
+# Plot the DAG using ggdag
+ggdag(dag, text = TRUE) + theme_void()
+
+```
+
+<br>
+
+b)  **Find all the paths from X to Y in this DAG. Which ones are causal?**^[Use the `dagitty` package to help you.]
+
+```{r, fig.align='center'}
+
+# Use the dagitty package to find all the paths from X to Y
+dagitty::paths(dag, "X", "Y")
+
+```
+
+::: answer
+
+The causal paths are "X -> Y" and "X -> Z3 -> Y".
+
+:::
+
+<br>
+
+c) **In the path $X$ ← $Z_4$ → $Z_1$ ← $Z_2$ → $Y$, what type of node is $Z_1$? Does conditioning on $Z_1$ open or close this path?**
+
+::: answer
+
+In the path $X$ ← $Z_4$ → $Z_1$ ← $Z_2$ → $Y$, the node $Z_1$ is a **collider**， which is a node with two arrows pointing into it.
+
+Conditioning on a collider, like $Z_1$, **opens the path** between the variables it collides. This means that if we control for the value of $Z_1$ (i.e., only consider instances where $Z_1$ takes a specific value), the relationship between $X$ and $Y$ becomes conditionally causal.
+
+:::
+
+<br>
+
+d) **Now consider the path $X$ ← $Z_1$ → $Y$. Does conditioning on $Z_1$ open or close this path?**
+
+::: answer
+ 
+Conditioning on $Z_1$, which is a confounder, would **close** the path.
+
+:::
+
+<br>
+
+e)  **Based on your DAG, list the minimum sets of variables to condition on to satisfy the backdoor criterion for the causal effect of $X$ on $Y$. Use the `ggdag::ggdag_adjustment_set` function to visualize your answer.**
+
+```{r, fig.align='center'}
+
+# Find the minimum sets of variables to condition on
+minimum_set <- adjustmentSets(dag, exposure = "X", outcome = "Y")
+
+# Visualize the minimal set for the causal effect of X on Y
+ggdag_adjustment_set(dag, exposure = "X", outcome = "Y") + theme_void()
+
+```
+
+::: answer
+
+$\{Z_1, Z_2\}$ and $\{Z_1, Z_4\}$ are the minimal sets of variables to condition on in order to meet the backdoor requirement for the causal influence of $X$ on $Y$.
+
+:::
+
+<br>
+
+### Task 3: Draw your own DAG
+
+Focusing on some social, political, economic, or natural process you care about, please draw a nicely labeled DAG.^[No need to go overboard here; I recommend limiting yourself to no more than six or so variables.] Your research question should focus on a particular causal effect, $D \rightarrow Y$. Briefly explain your DAG in words, including where you have omitted arrows and why you think that's justified. Find the minimal conditioning set(s) for identifying the causal effect of $D$ on $Y$ using the tools from Task 2. 
+
+```{r, fig.align='center'}
+
+# Create DAG
+dag2 <- dagify(Y ~ E + D + H,
+              E ~ G,
+              D ~ A + E,
+              H ~ A + D,
+              labels = c(Y = "Unemployment_Hazards", E = "Education", 
+                         D = "Migration_Status", H = "Health", 
+                         G = "Gender", A = "Age"))
+
+# Plot the DAG using ggdag
+ggdag(dag2, text = TRUE, use_labels = "label", text_size = 2) + theme_dag_blank()
+
+# Find the minimum sets of variables to condition on
+minimum_set2 <- adjustmentSets(dag2, exposure = "D", outcome = "Y")
+
+# Visualize the minimal set for the causal effect of D on Y
+ggdag_adjustment_set(dag2, exposure = "D", outcome = "Y", 
+                     use_labels = "label", text_size = 2) + theme_void()
+
+```
+
+::: answer
+
+The **research question** explores the causal relationship between migration status (D) and unemployment hazards (Y). The DAG illustrates the assumed causal structure, where immigration status is influenced by gender (G), education (E), and age (A). Health (H) serves as a mediator affected by age (A) and migration status (D), subsequently influencing the likelihood of encountering unemployment hazards. Notably, omitted arrows indicate no direct paths from age or gender to unemployment hazards, implying mediation by other factors such as education, health, or migration status. To isolate the direct causal effect of migrant status (D) on unemployment hazards (Y), we close the backdoor routes and control for age (A) and education (E). This allows for an unbiased analysis of the causal relationship, reducing the impact of confounding variables.
+
+:::

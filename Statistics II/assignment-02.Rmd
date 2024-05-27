@@ -1,0 +1,275 @@
+---
+title: "Assignment 2: Regression and Matching"
+author: "TYPE YOUR STUDENT ID HERE"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    #code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{=html}
+<style>
+div.blue pre { background-color:lightblue; }
+div.blue pre.r { background-color:blue; }
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+```{r, include=FALSE}
+# Custom function to install needed packages, if they're not
+# already installed on your machine
+check.packages <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE,
+                     repos = "https://cran.rstudio.com")
+  sapply(pkg, require, character.only = TRUE)
+}
+
+check.packages(c("MatchIt", "tidyverse", "wooldridge"))
+```
+
+------------------------------------------------------------------------
+
+```{r, include = F}
+# LOAD PACKAGES HERE (PLEASE DON'T COPY IN CODE TO INSTALL PACKAGES)
+pacman::p_load(tidyverse, magrittr, janitor, wooldridge)
+```
+
+### General guidelines
+
+-   Please put all code used to arrive at your answer in the associated code box for that question. We cannot give full credit if you do not show the code you used to arrive at your answer, or if you put your code in the wrong place.
+-   The expected submission output is an HTML file. Only HTML submissions will be graded.
+-   Please include all your text-based answers inside the `::: answer :::` tags. Any answers written outside these designated sections will not be graded.
+-   Please avoid printing unnecessary output, such as complete data frames.
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 1: Smoking Behavior and Infant Birth Weight
+
+For this exercise, you will use the `bwght` dataset from the `wooldridge` package. The data comes from the 1988 US National Health Interview Survey and contains information about maternal smoking behavior, infant birth weight, and additional social and economic markers. *Note:* The `bwght` dataset is already loaded in the first `R` chunk of this file (`pacman::p_load()`. To see what additional information is in the dataset, you can type `?bwght` in your R console.
+
+<br>
+
+a)  Estimate the following model: $$
+    \text{bwght} = \beta_0 + \beta_1\text{cigs} + \beta_2\text{male}
+    $$ and report the estimated coefficients as a table. Then, use `R` to compute the predicted birth weight in pounds for a baby girl with a mother that smoked 20 cigarettes per day while pregnant. (Or, please convert the birth weight to kilograms if that is more intuitive to you.) Please also briefly note statistical significance (or lack thereof) in your answer.
+
+```{r results='asis'}
+data("bwght")
+model1 <- lm(bwght ~ cigs + male, data = bwght)
+modelsummary::modelsummary(model1,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           fmt = 2)
+```
+
+<br>
+
+```{r}
+# in pounds
+predict(model1, newdata = data.frame(cigs = 20, male = 0)) %>% multiply_by(1/16) %>% round(2)
+# in kilograms
+predict(model1, newdata = data.frame(cigs = 20, male = 0)) %>% multiply_by(0.0284) %>% round(2)
+```
+
+b)  Create a new dummy variable, `smoker`, that takes a value of 1 if $cigs > 0$ and 0 otherwise, and report the proportion of smokers in the sample. Check the balance (smokers vs. non-smokers) on some variables of your choosing that might confound the relationship between smoking and birth weight. Your output should be in a well-formatted table. Briefly comment on the variables where you see statistically significant differences.
+
+```{r}
+bwght %<>%
+  mutate(smoker = ifelse(cigs > 0, 1, 0))
+
+tabyl(bwght$smoker) %>% adorn_rounding(2)
+
+list_cov <- c("faminc", "cigtax", "cigprice", "fatheduc", 
+              "motheduc", "parity") 
+
+bwght %>%
+  dplyr::summarize_at(list_cov, funs(list(broom::tidy(t.test(. ~ smoker))))) %>% 
+  purrr::map(1) %>% 
+  dplyr::bind_rows(.id = 'variables') %>% 
+  dplyr::select(variables, estimate1, estimate2, p.value) %>% 
+  dplyr::mutate_if(is.numeric, round, 3) %>% 
+  knitr::kable(col.names = c("Variable", "Control (Smoker = 0)", "Treat (Smoker = 1)", "p-value"), digits = 2) %>% 
+  kableExtra::kable_styling() 
+```
+
+<br>
+
+::: answer
+We see statistically significant differences (at $p<0.05$) for `faminc`, `fatheduc`, and `motheduc`. These variables could confound the relationship between smoking and birth weight, so we want them to be balanced between smokers and non-smokers before trying to estimate the causal effect of smoking on birth weight.
+:::
+
+<br>
+
+c)  Specify a logit model to generate the propensity scores using variables you would want to match on based on your findings in b). Present the output of the model as a well-formatted table, and provide a plot that compares the density distribution of the propensity scores for the treated (smoker) and untreated (non-smoker) units before matching, in one panel.
+
+```{r}
+# estimate logit model
+model_logit <- glm(smoker ~ faminc + fatheduc + motheduc + cigtax + parity + male,
+                   family = binomial(link = "logit"), # you can also use a probit link here
+                   data = bwght)
+
+# report model output
+modelsummary::modelsummary(model_logit, 
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           fmt = 2)
+
+# extract predicted probabilities
+# type = "response" option tells R to output probabilities of the form P(Y = 1|X)
+prs_df <- dplyr::tibble(pr_score = predict(model_logit, type = "response"),
+                        smoker = model_logit$model$smoker) # the actual values
+
+# Density plot
+ggplot(prs_df, aes(x = pr_score, fill = factor(smoker))) +
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Propensity Score Distribution: Treatment and Control Groups",
+       x = "Propensity Score",
+       y = "Density",
+       fill = "Smoker") 
+```
+
+<br>
+
+d)  Use the `MatchIt` package to implement propensity score matching. Use the nearest neighbor method, and use 1:1 matching by setting the ratio to 1; otherwise, stick to the default settings of the function. Use the matched sample generated by the algorithm to i) produce and report a balance table, ii) estimate the effect of being a smoker on birth weight. Please report and interpret your estimate and discuss the conditions under which it represents a causal effect.
+
+```{r}
+match_data <- bwght %>% 
+  dplyr::select(bwght, smoker, faminc, fatheduc, motheduc, cigtax, parity, male) %>% 
+  na.omit()
+
+one_match <- MatchIt::matchit(smoker ~ faminc + fatheduc + motheduc + cigtax + parity + male, 
+                              method = "nearest", 
+                              ratio = 1, 
+                              data = match_data)
+# grab data set
+data_prop_match <- MatchIt::match.data(one_match)
+
+# create list of covariates for the table
+list_cov_mtch <- c("faminc", "fatheduc", "motheduc", "cigtax", "parity", "male")
+
+data_prop_match %>% # our data frame
+  dplyr::summarize_at(list_cov_mtch, funs(list(broom::tidy(t.test(. ~ smoker))))) %>% # sequentially run t-tests across all the covariates in the list_cov (note that you have to change the "treatment")
+  purrr::map(1) %>% # maps into a list
+  dplyr::bind_rows(.id='variables') %>% # binds list into a single data frame and names the id column "variables" 
+  dplyr::select(variables, estimate1, estimate2, p.value) %>% # select only the names, group means, and p-values
+  dplyr::mutate_if(is.numeric, round, 3) %>% # round numeric variables to three places
+  knitr::kable(col.names = c("Variable", "Control (Smoker = 0)", "Treat (Smoker = 1)", "P value"), digits = 2) %>% # create kable table and remane headings
+  kableExtra::kable_styling() # style kable table for our knitted document
+
+
+# There are two approaches to running the final model
+# The first, Approach #1, is what we did in lab
+# Approach #2 also works
+
+# Approach #1
+prop_match_model_1 <- lm(
+  bwght ~ smoker * (faminc + fatheduc + motheduc + cigtax + parity + male),
+  weights = weights,
+  data = data_prop_match
+)
+
+marginaleffects::avg_comparisons(prop_match_model_1,
+                                 variables = "smoker",
+                                 vcov = ~subclass,
+                                 wts = "weights") 
+
+# Approach #2
+prop_match_model_2 <- lm(
+  bwght ~ smoker,
+  weights = weights,
+  data = data_prop_match
+)
+
+modelsummary::modelsummary(list("Nearest neighbor PS matching" = prop_match_model_2), 
+                           coef_omit = "Intercept",
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           fmt = 2)
+```
+
+<br>
+
+::: answer
+Our model estimates that smoking reduces birth weight by 8.66 (or 8.63 with the second approach) ounces. This estimate is statistically significant at the 1% level. We can interpret the effect as causal as long as:
+
+- We believe that smokers and non-smokers are exchangeable conditional on the covariates we used to estimate the propensity score. In other words, given the propensity score we estimated, the potential outcomes are the same between the treatment and the control group, which means that the difference in outcome between the treatment and control groups can be attributed to smoking rather than differences between who does and does not smoke. This condition is called the conditional independence assumption.
+
+- We identified all relevant confounders.
+
+- We are making claims where we have common support. This means that we are making claims about the effect of smoking on birth weight for people whose likelihood of smoking falls within the range of data we were able to match. As an extreme example, we cannot make causal claims about people with a 0% or 100% chance of smoking. This is referred to as the common support assumption.
+:::
+
+<br>
+
+### Task 2: Conditioning on a Mediator
+
+In this exercise, you will show with a small simulation how the decision to condition on a mediator (or not) changes your results. Suppose you're in the classic mediation scenario, where $X$ affects $Y$ directly ($X \rightarrow Y$), and also through the channel $M$ ($X \rightarrow M \rightarrow Y$). For instance, recall the labor market example, where:
+
+-   Discrimination against women ($X$) affects wages ($Y$) directly, i.e. the female CEO receives lower compensation than an otherwise identical male CEO.
+-   Discrimination also affects wages through the mediator of career choice ($M$): because of discrimination, women select out of the highest-paying professions, which in turn affects their wages.
+
+**Please do the following:**
+
+a.  Generate $X$ as a normally distributed random variable with mean 0 and standard deviation 1.
+
+b.  Generate $M$ as a linear function of $X$: $$M = 0.8X + e_m$$ and $Y$ as a linear function of $X$ and $M$: $$Y = X + M + e_y$$ You may assume that the errors $e_y$ and $e_m$ are both normally distributed with mean 0 and standard deviation 0.5. 
+
+c.  Report a nice regression table in which 1) you regress $Y$ on $X$ (first column), and 2) you regress $Y$ on $X$ and $M$ (second column). What is the difference between these two approaches? Compare your estimated coefficients to the true parameters you used to generate the variables. Interpret your results in the context of the labor market example.
+
+```{r}
+set.seed(123) # set a seed for reproducibility
+N <- 500
+x <- rnorm(N, 0, 1)
+em <- rnorm(N, 0, .5)
+m <- 0.8*x + em  # m is mediator
+ey <- rnorm(N, 0, .5)
+y <- x + m + ey
+plot(x, y)
+
+# sparse model 
+model_sparse <- lm(y ~ x)
+
+# full model 
+model_full <- lm(y ~ x + m)
+
+# create a table 
+modelsummary::modelsummary(list(model_sparse, model_full),
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           fmt = 2)
+```
+
+<br>
+
+::: answer
+The first model, which only includes discrimination against women ($X$), estimates the relationship between discrimination against women and wages ($Y$). We can interpret the coefficient of $X$ as the total effect of discrimination on women's wages. The second model, which includes both discrimination against women ($X$) and career choice ($M$), estimates both the effect of career choice ($M$) on wages and the effect of discrimination controlling for career choice. If we are interested in the difference in wages between men and women within an occupation, we should choose the second model. On the other hand, if we are interested in the total effect of discrimination on wages, the coefficient of $X$ in the first model will capture both the direct effect of discrimination and the indirect effect (i.e., effect mediated through career choice).
+
+Note that the estimates we get in our regression table correspond to the parameters we used to generate the data. In the first column, $\beta=1.8$ matches $Y = 1X + M + e_y = 1X + (0.8X + e_m) + e_y = 1.8X + e_m + e_y$. In the second column, $\beta=1$ matches $Y = 1X + M + e_y$. 
+:::

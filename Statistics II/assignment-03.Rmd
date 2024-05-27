@@ -1,0 +1,273 @@
+---
+title: "Assignment 3: Instrumental Variables"
+author: "238672"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    #code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{=html}
+<style>
+div.blue pre { background-color:lightblue; }
+div.blue pre.r { background-color:blue; }
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+```{r, include=FALSE}
+# Custom function to install needed packages, if they're not
+# already installed on your machine
+check.packages <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE,
+                     repos = "https://cran.rstudio.com")
+  sapply(pkg, require, character.only = TRUE)
+}
+
+check.packages(c("MatchIt", "tidyverse", "wooldridge"))
+```
+
+------------------------------------------------------------------------
+
+```{r, include = F}
+# LOAD PACKAGES HERE (PLEASE DON'T COPY IN CODE TO INSTALL PACKAGES)
+pacman::p_load(tidyverse, magrittr, janitor, wooldridge)
+```
+
+### General guidelines
+
+-   Please put all code used to arrive at your answer in the associated code box for that question. We cannot give full credit if you do not show the code you used to arrive at your answer, or if you put your code in the wrong place.
+-   The expected submission output is an HTML file. Only HTML submissions will be graded.
+-   Please include all your text-based answers inside the `::: answer :::` tags. Any answers written outside these designated sections will not be graded.
+-   Please avoid printing unnecessary output, such as complete data frames.
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 1: LEGOs and cognitive development in early childhood
+
+```{r echo = F, fig.align="center", out.width="50%"}
+knitr::include_graphics("https://www.verywellhealth.com/thmb/WyfCtmhzBO-MxPM-L3_Of3w3fMg=/1500x0/filters:no_upscale():max_bytes(150000):strip_icc()/GettyImages-176829483-1db463453a484d4988b187a7540b4dff.jpg")
+```
+
+LEGO brick building has become a popular intervention for promoting cognitive development in children. Research has shown that playing with LEGOs can enhance children's cognitive abilities, such as spatial reasoning, problem-solving, and creativity.
+
+Suppose we want to estimate the effect of LEGO brick building on basic problem-solving abilities of preschool children. We initially considered implementing a randomized experiment where we assign children to the treatment (the treatment being one hour of LEGO building activities per day). But then we realized that it is impossible, and perhaps unethical, for us to force children to play with LEGOs or to prevent children from playing with LEGOs. Therefore, we decide to implement an encouragement design, in which preschool teachers randomly *suggest* to some children but not to others that they play with LEGOs.
+
+The results are in the `lego_df.RData` dataset, which has the following variables:
+
+-   `id`: a numeric variable with the individual pre-schooler id
+-   `age`: a numeric variable with the age of the pre-schooler in months
+-   `encour`: a binary indicator of the encouragement to play with LEGO bricks from the preschool teacher
+-   `played`: a binary indicator of the treatment, which indicates whether the child actually played with LEGOs at any given point of the school day
+-   `test`: a numeric variable that represents each child's test score on an assessment of various problem-solving activities
+
+With these data, please do the following:
+
+**a) Illustrate visually the observed differences in the outcome of interest between the `played = 1` and the `played = 0` groups. We would like to see a density plot of the test score distributions by group, with a solid line at the mean of each distribution and a dashed line at the median. Please don't forget to put informative titles and axis labels on your plot.**
+
+```{r}
+# Load necessary libraries (if not already loaded)
+library(ggplot2)
+
+# load the data
+load(file = 'lego_df.RData')
+
+# Filter data for played = 1 and played = 0 groups
+played_1 <- lego_df[lego_df$played == 1, ]
+played_0 <- lego_df[lego_df$played == 0, ]
+
+# Create density plots
+ggplot() +
+  geom_density(data = played_1, aes(x = test, fill = "Played = 1"), alpha = 0.5) +
+  geom_density(data = played_0, aes(x = test, fill = "Played = 0"), alpha = 0.5) +
+  geom_vline(data = played_1, aes(xintercept = mean(test)), linetype = "solid", color = "blue") +
+  geom_vline(data = played_0, aes(xintercept = mean(test)), linetype = "solid", color = "red") +
+  geom_vline(data = played_1, aes(xintercept = median(test)), linetype = "dashed", color = "blue") +
+  geom_vline(data = played_0, aes(xintercept = median(test)), linetype = "dashed", color = "red") +
+  labs(title = "Density Plot of Test Score Distributions by Group",
+       x = "Test Scores",
+       y = "Density",
+       fill = "Group") +
+  scale_fill_manual(values = c("Played = 1" = "blue", "Played = 0" = "red")) +
+  theme_minimal()
+
+```
+
+<br>
+
+**b) Discuss the assumptions needed for the encouragement to work as a valid instrument for playing with LEGOs. Your answer should not just restate the general definitions of the assumptions, but apply them to the specific case. For each assumption, please also describe what a potential violation could look like in this context.**
+
+::: answer
+When discussing the conditions for encouraging children to engage in LEGO play effectively we need to take into account the following aspects:
+
+-   **Exogeneity**: It's crucial that the encouragement for LEGO play is not influenced by any other factors that could impact a childs problem solving skills. This means that preschool teachers should decide to promote LEGO play without being swayed by the childs existing abilities or traits. It could skew the results if teachers tend to encourage children with cognitive skills more.
+
+-   **Exclusion Restriction**: The encouragement should only affect a childs problem solving skills through LEGO play. If the encouragement has an impact on outcomes through means (like children feeling more supported by teachers and performing better) it would violate this restriction.
+
+-   **Relevance**: The encouragement needs to have an impact on changing childrens behavior leading to a noticeable increase in those engaging in LEGO play who wouldn't have otherwise. If the encouragement is too weak there may be no change, in how likely children're to play with LEGOs.
+
+-   **Monotonicity**: If not for encouragement, there are no children who would play with LEGOs and would play if encouraged. If there are defiers, children who would play without encouragement or refuse to play despite it, then this assumption is broken.
+
+These assumptions are fundamental for the validity of using encouragement as an instrument in this context. It's important to ensure they hold true for the study's conclusions to be reliable.
+:::
+
+<br>
+
+**c) Please generate a table of compliance types by cross-tabulating the treatment by the encouragement.**
+
+-   How many children were encouraged to play with LEGOs but didn't do so? Assuming there are no defiers, what type(s) (compliers, never-takers, always-takers) are in this group?
+-   How many children were not encouraged to play with LEGOs, but did so anyway? What type(s) are in this group?
+
+```{r}
+# generate a table of compliance types
+lego_df %>% # your data frame
+  janitor::tabyl(played, encour) %>% # the two dimensions for the table (D, Z)
+  janitor::adorn_totals(c("row", "col")) %>% # add totals for rows and cols
+  knitr::kable() %>% # turn into a kable table for nice rendering in HTML
+  kableExtra::kable_styling() %>% # adjust the table style
+  kableExtra::add_header_above(c("", "encourage" = 2, "")) #add header for 'encour' columns
+
+```
+
+::: answer
+The number of children who were encouraged to play with LEGOs but didn't do so is 66. Assuming there are no defiers, these would be classified as "never-takers".
+
+The number of children who were not encouraged to play with LEGOs, but did so anyway is 110. These would be classified as "always-takers".
+:::
+
+<br>
+
+**d) Test the relevance assumption: report a test statistic showing whether the encouragement can be considered a sufficiently strong instrument.**
+
+```{r}
+# test statistic for relevance
+lm(played ~ encour, data = lego_df) %>%
+  modelsummary::modelsummary(stars = c('*' = .1, '**' = .05, '***' = .01),
+                             statistic = 'conf.int',
+                             gof_omit = "AIC|BIC|Log",
+                             fmt = 2)
+
+```
+
+::: answer
+The F-statistic of 31.993, which is greater than 10, indicates that the instrument (encouragement) is strongly relevant in explaining the variation in playing with LEGOs. This suggests that the encouragement variable can be considered a sufficiently strong instrument for the analysis.
+:::
+
+<br>
+
+**e) Generate a *naïve average treatment effect (NATE)* of playing with LEGOs on problem-solving abilities, ignoring the encouragement status. Then, estimate the *Intent to Treat Effect (ITT)* of the encouragement on the same outcome. Finally, estimate the *Local Average Treatment Effect (LATE)*. Report all estimates/models in one table, and discuss what you've learned from this analysis.**
+
+```{r}
+
+# Naïve Average Treatment Effect (NATE)
+nate <- lm(test ~ played, data = lego_df)
+
+# Intent to Treat Effect (ITT)
+itt <- lm(test ~ encour, data = lego_df)
+
+# Local Average Treatment Effect (LATE)
+late <- estimatr::iv_robust(test ~ played | encour, data = lego_df)
+
+
+# Combine the results into a single table
+models <- list(nate, itt, late)
+names(models) <- c("NATE", "ITT", "LATE")
+models %>% 
+  modelsummary::modelsummary(
+    stars = c('*' = .1, '**' = .05, '***' = .01),
+    statistic = 'conf.int',
+    gof_omit = "AIC|BIC|Log",
+    fmt = 2
+  )
+
+```
+
+::: answer
+**Summary of Treatment Effect Estimates**:
+
+-   **NATE (Naïve Average Treatment Effect)**:
+    -   The difference in average abilities between those who played with LEGOs and those who did not, ignoring encouragement.
+    -   This estimate does not account for potential biases due to non-compliance or encouragement.
+    -   NATE suggests a positive effect of playing with LEGOs on problem-solving abilities.
+-   **ITT (Intent to Treat Effect)**:
+    -   The effect of encouragement (assignment to treatment) on problem-solving abilities, regardless of actual compliance.
+    -   ITT compares average outcomes between those assigned to treatment (encouraged) and those assigned to control (not encouraged).
+    -   ITT indicates a positive effect of encouragement on problem-solving abilities.
+-   **LATE (Local Average Treatment Effect)**:
+    -   Focuses on compliers (those who comply with encouragement).
+    -   Represents the effect of encouragement for this specific subgroup.
+    -   LATE provides a more precise estimate for those who respond to encouragement.
+
+**What I've learned**:
+
+-   Encouragement has a positive impact on problem-solving abilities.
+
+-   Compliance matters: LATE focuses on those who actually respond to encouragement.
+
+-   Consider both ITT and LATE for a comprehensive understanding of treatment effects.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 2: Choose your own instrument
+
+For this task, you have two options. Please pick only one.
+
+1)  Try to come up with your own IV design. Please specify the treatment, the outcome, and the instrument. Please discuss the assumptions required for this to be a valid instrument *in the context of your study*, and try to identify potential violations. It's really hard to find a good instrument, so it's alright if your design is not perfect, as long as you show that you understand what the potential violations are.
+
+2)  If you can't come up with a good instrument of your own, pick a published IV design from the lecture or your own research, and explain it to us. As in option (1), your explanation has to include the treatment, the outcome, and the instrument. Please discuss the assumptions required for this to be a valid instrument *in the context of this study*, and try to identify potential violations.
+
+::: answer
+**My Research Question**:
+
+Do German native-born workers' salaries decline as a result of the Syrian Civil War-related surge in immigration to Germany?
+
+**Design of Instrumental Variables (IV)**:
+
+-   **Treatment**: The rise in Syrian immigration as a result of the Syrian Civil War in various German economic sectors or locations.
+
+-   **Outcome**: Average hourly pay, yearly income, or variations in the wage distribution for workers who are native-born Germans.
+
+-   **Instrument**: The Syrian Civil War-related migratory waves of Syrians to Germany. This presupposes that the civil war has no direct effect on native-born German workers' salaries, other than via its influence on the quantity of immigrants from Syria.
+
+**Assumptions for a Valid Instrument**:
+
+-   **Relevance**: A substantial rise in Syrian immigration to Germany was caused by the Syrian Civil War.\
+-   **Exogeneity**: While it did have an influence on Syrian immigration, the Syrian Civil War had no direct effect on native-born German workers' earnings.\
+-   **Exclusion**: There are no other ways that the Syrian Civil War might have an impact on German native-born workers' salaries except through an increase in Syrian immigration.
+
+**Potential Violations and Challenges**:
+
+-   Germany might have experienced direct economic effects (e.g., trade, investment) of the Syrian Civil War independent of immigration. The war's impact on German wages may needs to be addressed in the analysis (control variables, DID).
+
+-   Locations with higher pre-existing wages or job opportunities might attract more immigrants. This could lead to reverse causality, where higher wages (not the other way around) attract more immigrants.
+
+-   Changes in demand or governmental spending, which may have an indirect impact on wages, are some of the wider economic repercussions of the Syrian refugee crisis that may extend beyond the labor market.
+:::
+
+<br>

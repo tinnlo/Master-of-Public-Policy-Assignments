@@ -1,0 +1,434 @@
+---
+title: "A Costly Commitment: Populism, Economic Performance, and the Quality of Bureaucracy"
+author: "236495, 238672, 238867"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    toc: no
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+------------------------------------------------------------------------
+
+```{r, include=FALSE}
+# Install Packages if not installed or if installed with different version
+pacman::p_load(devtools, tidyverse, rdrobust, rdpower, kableExtra, 
+               scales, rddensity, plm, rvest, lubridate, readxl, descr)
+
+# packages with specific version
+pk = data.frame(
+  package = c("rdrobust", "rdpower"),
+  version = c("2.0.2", "2.2")
+  )
+
+# Function to install the appropriate version of package
+# This is important for the RD packages, for we noticed that different versions produce minimally different results
+pk_fun = function(package, version){
+  if(!package %in% installed.packages() | packageVersion(package) != version){
+devtools::install_version(package, version = version)}
+}
+
+# Apply to each package
+for(i in 1:nrow(pk)) pk_fun(package = pk$package[i], version = pk$version[i])
+
+# Load packages
+lapply(pk$package, library, character.only = TRUE)
+
+```
+
+
+## 1. Summary
+
+<!--In this section, you are expected to provide a summary of the paper’s research question and main findings, as well as a detailed critical assessment of the causal identification strategy employed by the authors.-->
+The paper _A Costly Commitment: Populism, Economic Performance, and the Quality of Bureaucracy_ by Luca Bellodi, Massimo Morelli, and Matia Vannoni utilizes a close election regression discontinuity design (RDD) model to analyze the effect of electing a populist leader at the municipal level on factors of economic performance and bureaucratic quality. The researchers hypothesize that the election of a populist government leads to (1) lower economic performance, (2) higher bureaucratic turnover, and (3) lower quality of bureaucracy (pg. 198). Specifically, the paper looks at the effect electing a populist mayor has on municipal debt accumulation, debt repayment, contract cost overruns, turnover among municipal bureaucrats, and the number of bureaucrats with a postgraduate education (**Treatment** - Election of a Populist; **Dependent Variables** - Debt Accumulation, Debt Repayment, Cost Overruns, Bureaucratic Overturn, Bureaucrats with a Postgraduate Education).
+
+The researchers identify “unconditional commitments” as a key feature of populist politicians and their policies. They argue that as citizens lose faith in the established political system and its traditional norms and actors, populist politicians are incentivized  to “propose a commitment-type policy platform that can be easily monitored by voters” (pg. 205). This incentivization of limitless policy commitments manifests into the dependent variables observed in this study.
+
+The focus of the study on local level governance in Italy is significant in that (1) Italian municipalities use a direct election for mayors and (2) mayoral offices have a large degree of autonomy to affect financial, procurement, and staffing. Additionally, the Italian political environment includes six active populist parties. The data utilized in the study covers the years from 1998 - 2020 and includes (1) municipal elections, mayoral candidates, and politician partisan affiliation, (2) economic performance and procurement information, and (3) bureaucratic composition of the municipal governments (pg. 198).
+
+Identifying a causal relationship between the treatment and dependent variables faces several challenges. As the researchers note, the election of a populist government is rarely if ever the result of random chance. Rather, elections of populists historically correlate with economic, political, and social factors (pg. 194), diminishing the path to draw causal relationships. Municipalities where populists win by wide margins may differ in unobservant characteristics from municipalities where populists lose by wide margins. However, close election RDD allows the researchers to address this challenge by looking at the subset of municipalities where populist mayors narrowly won or lost elections (pg. 199), assuming that the closer the Running Variable (X = share of votes) is to the cutoff (50% of votes cast in an election), the lesser the influence from unobserved variables. On average, those municipalities with election results around the threshold share the same characteristics and differ only in whether or not they elect a populist mayor.
+
+Additionally, there could exist challenges to the identification assumption (continuity of other variables around the threshold). The researchers identify the challenger (as opposed to incumbency) status of populist mayors as a potential confounder impacting changes in economic performance and bureaucratic organizing quality (pg. 204). To test the validity of this potential confounding, they remove incumbent mayors (mayors serving at least their second term) and mayors serving their first term but who are supported by an incumbent party. Accounting for this potential source for confounding, the estimates still indicate that the mayors’ populist approach is driving the results rather than characteristics associated with the status of being a political challenger (i.e. government inexperience).
+
+
+## 2. Reproduction of paper's table or figure
+
+<!--In this section, you are expected to reproduce a table or figure from the paper relating to the modeling of the outcome(s) of interest.-->
+For the replication component, we looked at Figure 1 - Average Outcomes for Municipalities in which a Populist Barely Won and Lost the Election. When replicating the code, including some minor alterations from the researchers’ original version, we were able to exactly replicate the graphs using the dataset provided.
+
+
+```{r}
+# Load Analysis Dataset, rows are municipality-calendar year pairs
+rdd_data = readRDS("dataverse_files/dataset.Rds")
+
+########################
+## Figure 1: RD Plots ##
+########################
+
+# Set default ggplot theme (settings suitable for conversion into MS Word)
+theme_ggplot = theme(strip.text.x = element_text(margin = margin(0.1,0.1,0.1,0.1, "cm"), color = "black"),
+                     strip.text.y = element_text(margin = margin(0.1,0.1,0.1,0.1, "cm"), color = "black"),
+                     panel.border = element_rect(linewidth = 0.3, fill=NA),
+                     strip.background.x = element_blank(),
+                     strip.background.y = element_blank(),
+                     panel.grid = element_blank(),
+                     panel.spacing = unit(0.1, "lines"),
+                     strip.text = element_text(size = 8, color = "black"),
+                     axis.text.x = element_text(size = 6, color = "black"),
+                     axis.text.y = element_text(size = 7, color = "black"),
+                     axis.title = element_text(size = 8, color = "black"))
+
+fig1_data <- rdd_data %>% filter(abs(margin) < 8) %>%
+  mutate(mayor_populist = margin > 0) %>%
+  gather(key = dv, value = variable, 
+         c("bur_turnover", "bur_degree", "debt_repayment", "debt_accumulation", "cost_overrun_dummy")) %>%
+  filter(!is.na(variable)) %>%
+  mutate(dv = case_when(str_detect(dv, "turnover") ~ "Turnover\nManagers",
+                        str_detect(dv, "repayment") ~ "Debt\nRepayment",
+                        str_detect(dv, "overrun") ~ "Percent Cost\nOverruns",
+                        str_detect(dv, "accumulation") ~ "Debt\nAccumulation",
+                        str_detect(dv, "degree") ~ "Percent Postgraduate\nManagers"))
+
+fig1_data$dv = factor(fig1_data$dv, 
+                      levels = c("Debt\nAccumulation", "Debt\nRepayment", "Percent Cost\nOverruns", "Turnover\nManagers", "Percent Postgraduate\nManagers"))
+
+fig1 = ggplot(fig1_data, aes(x = margin, y = variable, shape = mayor_populist, 
+                             color = as.factor(mayor_populist), linetype = mayor_populist)) +
+  stat_summary_bin(fun = "mean", binwidth = 0.5, geom = "point", size = 0.4) +
+  theme_bw() +
+  scale_color_manual(values = c("black", "grey60")) +
+  geom_vline(xintercept = 0, linewidth = 0.1, linetype = 2) +
+  guides(shape = "none", linetype = "none", color = "none") +
+  geom_smooth(linewidth = 0.5, method = "lm", formula = y ~ poly(x,2), se = F) +
+  labs(x = "Margin of Victory", y = NULL) +
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  facet_wrap(~dv, ncol = 5, scales = "free_y") +
+  theme_ggplot
+
+# Visualize the plot
+ggsave("figure_1.png", fig1, width=7.2, height=2.2)
+knitr::include_graphics("figure_1.png")
+
+```
+
+## 3. Extension
+
+<!--In this section, you are expected to present an extension to the analysis from the paper. Additionally, you should provide a detailed justification of your extension and its potential contribution.-->
+For our extension we decided to look at how the differences in the effect of populism on the target dependent variables varies based on population density, simulating more rural versus more urban areas. To accomplish this, we first divided the dataset into three coarse bins, based on population density of the municipalities - low density, medium density, and high density. To create this variable, we divided the square kilometer surface area into the population size for each municipality. We then created three bins based on population density and ran the same tests utilized by the researchers on the target dependent variables.
+
+```{r}
+# Please make sure we can see all code and output here
+
+# add variable of population density: population divided by surface area
+rdd_data$pop_density = rdd_data$population_istat / rdd_data$ISTAT_surface_sq_km
+
+# filter the NA values
+rdd_data = rdd_data %>% filter(!is.na(pop_density))
+
+#### three categories of population density ####
+
+# filter the NA values of margin
+rdd_data3 = rdd_data %>% filter(!is.na(margin))
+
+# filter the NA values
+#rdd_data = rdd_data %>% filter(!is.na(pop_density))
+
+# Create a new variable for the log of population density
+rdd_data3$log_pop_density = log(rdd_data3$pop_density)
+
+# Median log population density
+med_pop_density = median(rdd_data3$log_pop_density[!is.na(rdd_data3$margin)], na.rm = T)
+
+# create a new factor variable for the log of population density
+rdd_data3$pop_density_factor = NA
+rdd_data3$pop_density_factor[rdd_data3$log_pop_density < 5.3] = "1-Low"
+rdd_data3$pop_density_factor[rdd_data3$log_pop_density >= 5.3 & rdd_data3$log_pop_density < 6.3] = "2-Medium"
+rdd_data3$pop_density_factor[rdd_data3$log_pop_density >= 6.3] = "3-High"
+rdd_data3$pop_density_factor = factor(rdd_data3$pop_density_factor,
+                                     levels = c("1-Low", "2-Medium", "3-High"))
+
+
+density_datasets_3 <- list(rdd_data3 %>% filter(pop_density_factor == "1-Low"),
+                         rdd_data3 %>% filter(pop_density_factor == "2-Medium"),
+                         rdd_data3 %>% filter(pop_density_factor == "3-High"))
+
+# name of subsample
+subsample <- c("Low", "Medium", "High")
+
+# name and type of dvs
+dv_names <- c("Debt Accumulation", "Debt Repayment", "% Cost Overruns", "Turnover Managers", "% Postgraduate Managers")
+type <- c(rep("Government\nPerformance", 3), rep("Quality of\nBureaucrats", 2))
+
+population_density_3 <- data.frame()
+
+for(j in 1:length(density_datasets_3)){
+
+  rd <- density_datasets_3[[j]]
+
+  # List of DV
+  dv <- with(rd, list(
+    # Performance
+    debt_accumulation,
+    debt_repayment,
+    cost_overrun_dummy,
+    # Bureaucrats
+    bur_turnover,
+    bur_degree
+  ))
+
+
+  for(i in 1:length(dv)){
+
+    rd_no_cov <- with(rd, rdrobust(y = dv[[i]],
+                                   x = margin,
+                                   all = T,
+                                   cluster = ISTAT_CODICE_COMUNE,
+                                   masspoints = "nearest"))
+
+    results_cov <- data.frame(dv = dv_names[i],
+                              estimate = rd_no_cov$coef[1],
+                              se = rd_no_cov$se[3],
+                              p.value = rd_no_cov$pv[3],
+                              h = rd_no_cov$bws[1],
+                              conf.low = rd_no_cov$ci[3],
+                              conf.high = rd_no_cov$ci[6],
+                              `Obs. used` = sum(rd_no_cov$N_h),
+                              cov = "No Covariates",
+                              type = type[i],
+                              subsample = subsample[j])
+
+    population_density_3 <- rbind(population_density_3, results_cov)
+
+  }
+}
+
+
+# round digits
+population_density_3 <- population_density_3 %>%
+  mutate_all(function(x){
+    if(is.numeric(x)){ x %>% round(3)
+    }else{x}})
+
+# Categories
+low <- population_density_3 %>% filter(subsample == "Low")
+medium <- population_density_3 %>% filter(subsample == "Medium")
+high <- population_density_3 %>% filter(subsample == "High")
+
+diff_pop_density <- bind_cols(low %>% select(dv, estimate, se, p.value),
+                              medium %>% select(estimate, se, p.value),
+                              high %>% select(estimate, se, p.value)
+                             )
+
+names(diff_pop_density)  <- c("Outcome", rep(c("Estimate", "SE", "p.value"), 3))
+
+
+# save table F.14 with three categories: low, medium, high
+kableExtra::kable(diff_pop_density, booktabs = T,
+                  format.args = list(big.mark = ","),
+                  align = c("r", rep("c", 7)),
+                  digits = 3,
+                  linesep = "",
+                  caption = "Table F.14: RD estimates of the effect of electing a populist mayor estimated based on the log of population density. Same estimation of baseline analysis. To maximize sample size, no covariates were included. Period of analysis: cost overruns 2012-2020, debt accumulation and repayment 2008-2019, turnover and education of bureaucrats 2001-2019.", escape = F) %>%
+  kableExtra::add_header_above(c(" " = 1, "Low Density" = 3, "Medium Density" = 3, "High Density" = 3), bold = T) %>%
+  kableExtra::kable_paper(full_width = T) %>%
+  kableExtra::kable_classic() %>%
+  kableExtra::kable_styling(font_size = 11) 
+
+```
+
+However, looking at these results, there’s no clear pattern distinguishable in the outcomes. We then decided to split our density data into coarser segments, separating down the middle into two bins - low density and high density. 
+
+When we apply the same tests to either population bin and look at the difference in effect size, we see the difference between high and low density area for debt accumulation and debt repayment is statistically significant. Cost Overruns, managerial turnover, and percentage of postgraduate managers are not statistically significant between low and high density areas. 
+
+Looking further, we see that low density municipalities have a smaller effect size for debt accumulation then high density municipalities, but on average they fall behind on repayment more often. We hypothesize that this could be the result of several contributing factors. High density municipalities could have larger operating costs that necessitate greater debt than low density municipalities. However, low density municipalities may have less robust and numerous revenue streams than higher density municipalities, limiting their ability to repay accumulated debt. To test these theories, additional data on economic and operating indicators would be necessary.   
+
+```{r}
+#### two categories of population density ####
+# filter the NA values of margin
+rdd_data2 = rdd_data %>% filter(!is.na(margin))
+
+# Create a new variable for the log of population density
+rdd_data2$log_pop_density = log(rdd_data2$pop_density)
+
+# Median log population density
+med_pop_density = median(rdd_data2$log_pop_density[!is.na(rdd_data2$margin)], na.rm = T)
+
+# create a new factor variable for the log of population density
+rdd_data2$pop_density_factor = NA
+rdd_data2$pop_density_factor[rdd_data2$log_pop_density < med_pop_density] = "1-Low"
+rdd_data2$pop_density_factor[rdd_data2$log_pop_density >= med_pop_density] = "2-High"
+rdd_data2$pop_density_factor = factor(rdd_data2$pop_density_factor)
+
+
+density_datasets_2 <- list(rdd_data2 %>% filter(pop_density_factor == "1-Low"),
+                         rdd_data2 %>% filter(pop_density_factor == "2-High"))
+
+# name of subsample
+subsample <- c("Low", "High")
+
+# name and type of dvs
+dv_names <- c("Debt Accumulation", "Debt Repayment", "% Cost Overruns", "Turnover Managers", "% Postgraduate Managers")
+type <- c(rep("Government\nPerformance", 3), rep("Quality of\nBureaucrats", 2))
+
+population_density_2 <- data.frame()
+
+for(j in 1:length(density_datasets_2)){
+
+  rd <- density_datasets_2[[j]]
+
+  # List of DV
+  dv <- with(rd, list(
+    # Performance
+    debt_accumulation,
+    debt_repayment,
+    cost_overrun_dummy,
+    # Bureaucrats
+    bur_turnover,
+    bur_degree
+  ))
+
+
+  for(i in 1:length(dv)){
+
+    rd_no_cov <- with(rd, rdrobust(y = dv[[i]],
+                                   x = margin,
+                                   all = T,
+                                   cluster = ISTAT_CODICE_COMUNE,
+                                   masspoints = "nearest"))
+
+    results_cov <- data.frame(dv = dv_names[i],
+                              estimate = rd_no_cov$coef[1],
+                              se = rd_no_cov$se[3],
+                              p.value = rd_no_cov$pv[3],
+                              h = rd_no_cov$bws[1],
+                              conf.low = rd_no_cov$ci[3],
+                              conf.high = rd_no_cov$ci[6],
+                              `Obs. used` = sum(rd_no_cov$N_h),
+                              cov = "No Covariates",
+                              type = type[i],
+                              subsample = subsample[j])
+
+    population_density_2 <- rbind(population_density_2, results_cov)
+
+  }
+}
+
+
+# round digits
+population_density_2 <- population_density_2 %>%
+  mutate_all(function(x){
+    if(is.numeric(x)){ x %>% round(3)
+    }else{x}})
+
+# Categories
+low <- population_density_2 %>% filter(subsample == "Low")
+high <- population_density_2 %>% filter(subsample == "High")
+
+diff_pop_density <- bind_cols(low %>% select(dv, estimate, se, p.value),
+                              high %>% select(estimate, se, p.value),
+                              data.frame(diff = high$estimate - low$estimate,
+                                         se = sqrt(high$se^2 + low$se^2)) %>%
+                              mutate(p.value = 2*(1-pnorm(abs(diff / se))))
+                             )
+
+names(diff_pop_density)  <- c("Outcome", rep(c("Estimate", "SE", "p.value"), 2), "Difference", "SE", "p.value")
+
+
+# save table F.14 with two categories: low, high
+kableExtra::kable(diff_pop_density, booktabs = T,
+                  format.args = list(big.mark = ","),
+                  align = c("r", rep("c", 7)),
+                  digits = 3,
+                  linesep = "",
+                  caption = "Table F.14: RD estimates of the effect of electing a populist mayor estimated based on the log of population density. Same estimation of baseline analysis. To maximize sample size, no covariates were included. Period of analysis: cost overruns 2012-2020, debt accumulation and repayment 2008-2019, turnover and education of bureaucrats 2001-2019.", escape = F) %>%
+  kableExtra::add_header_above(c(" " = 1, "Low Density" = 3, "High Density" = 3, "Difference\n(Low-High)" = 3), bold = T) %>%
+  kableExtra::kable_paper(full_width = T) %>%
+  kableExtra::kable_classic() %>%
+  kableExtra::kable_styling(font_size = 11) 
+
+# Set default ggplot theme (settings suitable for conversion into MS Word)
+theme_ggplot <- theme(
+  strip.text.x = element_text(margin = margin(0.1, 0.1, 0.1, 0.1, "cm"), color = "black"),
+  strip.text.y = element_text(margin = margin(0.1, 0.1, 0.1, 0.1, "cm"), color = "black"),
+  panel.border = element_rect(linewidth = 0.3, fill = NA),
+  strip.background.x = element_blank(),
+  strip.background.y = element_blank(),
+  panel.grid = element_blank(),
+  panel.spacing = unit(0.1, "lines"),
+  strip.text = element_text(size = 8, color = "black"),
+  axis.text.x = element_text(size = 6, color = "black"),
+  axis.text.y = element_text(size = 7, color = "black"),
+  axis.title = element_text(size = 8, color = "black")
+)
+
+# Create the dataset for plotting
+fig1_data <- rdd_data2 %>%
+  filter(abs(margin) < 8) %>%
+  mutate(mayor_populist = margin > 0) %>%
+  gather(key = dv, value = variable,
+         c("bur_turnover", "bur_degree", "debt_repayment", "debt_accumulation", "cost_overrun_dummy")) %>%
+  filter(!is.na(variable)) %>%
+  mutate(dv = case_when(
+    str_detect(dv, "turnover") ~ "Turnover\nManagers",
+    str_detect(dv, "repayment") ~ "Debt\nRepayment",
+    str_detect(dv, "overrun") ~ "Percent Cost\nOverruns",
+    str_detect(dv, "accumulation") ~ "Debt\nAccumulation",
+    str_detect(dv, "degree") ~ "Percent Postgraduate\nManagers"
+  ))
+
+fig1_data$dv <- factor(fig1_data$dv,
+                       levels = c("Debt\nAccumulation", "Debt\nRepayment", "Percent Cost\nOverruns", "Turnover\nManagers", "Percent Postgraduate\nManagers"))
+
+# Filter out NA values in the population density factor
+fig1_data <- fig1_data %>% filter(!is.na(pop_density_factor))
+
+# Create the ggplot object with faceting by population density and dependent variable
+fig1 <- ggplot(fig1_data, aes(x = margin, y = variable, shape = mayor_populist, 
+                              color = as.factor(mayor_populist), linetype = mayor_populist)) +
+  stat_summary_bin(fun = "mean", binwidth = 0.5, geom = "point", size = 0.4) +
+  theme_bw() +
+  scale_color_manual(values = c("black", "grey60")) +
+  geom_vline(xintercept = 0, linewidth = 0.1, linetype = 2) +
+  guides(shape = "none", linetype = "none", color = "none") +
+  geom_smooth(size = 0.5, method = "lm", formula = y ~ poly(x, 2), se = FALSE) +
+  labs(x = "Margin of Victory", y = NULL) +
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  facet_grid(pop_density_factor ~ dv, scales = "free_y") +
+  theme_ggplot
+
+# Save and visualize the plot
+ggsave("figure_exp.png", fig1, width = 7.2, height = 3.4)  # Adjust height to accommodate extra facet
+knitr::include_graphics("figure_exp.png")
+
+```
+
+
+## Conclusion
+
+<!--Please briefly conclude by explaining what you've learned, both from the original paper and from your extension.-->
+Additional follow up could be insightful, delving further into how the effects of populism on the target dependent variables varies across geographic and demographic segments. Another group who replicated this same paper conducted an extension based on the the effect of populism before and after the Eurozone Crisis. Combining their approach with the approach we took in our extension could yield interesting insights and highlight vulnerabilities and disparities between demographic/geographic societal segments. This would require additional data that clarifies elements absent in the initial dataset. The researchers indicated an opportunity to carry the work forward in such a fashion (pg. 207).
+
+Overall, the initial research paper was very well implemented and thoroughly done. Our extension offers a potential route for follow-up that could be implemented to further study the effects of populism in Italy and beyond. 
+
+------------------------------------------------------------------------
+
+## References
+
+## Optional: Statement of Contribution
+
+Group member [fill in ID here] contributed:
+
+Group member [fill in ID here] contributed:
+
+Group member [fill in ID here] contributed:
